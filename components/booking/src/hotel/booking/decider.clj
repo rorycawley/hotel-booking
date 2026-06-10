@@ -15,7 +15,12 @@
   (:require [hotel.event-store.interface :as es]
             [hotel.clock.interface :as clock]
             [malli.core :as m]
-            [malli.error :as me]))
+            [malli.error :as me])
+  (:import [clojure.lang ExceptionInfo]))
+
+(defn- concurrency-conflict? [e]
+  (= :concurrency-conflict
+     (:hotel.event-store/error (ex-data e))))
 
 (defn current-state
   "fold: replay history through evolve from the initial state."
@@ -49,5 +54,10 @@
       result
       (let [stamped (mapv #(assoc % :recorded-at (clock/now-interval clock))
                           (:events result))]
-        (es/append-events! event-store stream-id (count history) stamped)
-        {:events stamped}))))
+        (try
+          (es/append-events! event-store stream-id (count history) stamped)
+          {:events stamped}
+          (catch ExceptionInfo e
+            (if (concurrency-conflict? e)
+              {:error :concurrency-conflict}
+              (throw e))))))))

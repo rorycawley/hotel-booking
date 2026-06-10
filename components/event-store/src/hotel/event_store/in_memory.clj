@@ -10,7 +10,11 @@
     (swap! db (fn [s]
                 (let [current (get-in s [:streams stream-id] [])]
                   (when (not= (count current) expected-version)
-                    (throw (ex-info "Concurrency conflict" {:stream stream-id})))
+                    (throw (ex-info "Concurrency conflict"
+                                    {:hotel.event-store/error :concurrency-conflict
+                                     :stream stream-id
+                                     :expected-version expected-version
+                                     :actual-version (count current)})))
                   (-> s
                       (update-in [:streams stream-id] (fnil into []) events)
                       (update :all (fnil into []) events))))))

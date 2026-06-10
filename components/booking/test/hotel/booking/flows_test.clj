@@ -18,6 +18,10 @@
   {:room-id "102" :guest {:name "Ada" :email "ada@example.com"}
    :check-in "2026-07-01" :check-out "2026-07-03"})
 
+(def bob-books-102
+  {:room-id "102" :guest {:name "Bob" :email "bob@example.com"}
+   :check-in "2026-07-01" :check-out "2026-07-03"})
+
 (deftest a-successful-booking-confirms-announces-and-blocks-the-room
   (let [sys (system/test-system)]
     (is (:events (run!* api/book-room! sys ada-books-102)))
@@ -82,4 +86,12 @@
     (run!* api/move-guest! sys move-ada-102->103)
     (is (= ["101" "102" "103"] (api/available-rooms sys))
         "compensation freed 103 - the world is exactly as before")
+    (is (= :failed (move-status sys "m1")))))
+
+(deftest moving-a-guest-does-not-cancel-someone-elses-room
+  (let [sys (system/test-system)]
+    (run!* api/book-room! sys bob-books-102)
+    (run!* api/move-guest! sys move-ada-102->103)
+    (is (= ["101" "103"] (api/available-rooms sys))
+        "102 stays booked by Bob; 103 is compensated back to free")
     (is (= :failed (move-status sys "m1")))))

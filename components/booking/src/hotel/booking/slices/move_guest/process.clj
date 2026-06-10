@@ -91,7 +91,9 @@
        :record-new-room-booked
        (step state :booking-new-room
              {:event/type :move-new-room-booked
-              :move-id (:move-id state) :from-room (:from-room state)})
+              :move-id (:move-id state)
+              :from-room (:from-room state)
+              :guest (:guest state)})
 
        :record-new-room-failed
        (step state :booking-new-room
@@ -130,7 +132,9 @@
     ;; step 2: cancel the OLD room
     :move-new-room-booked
     [{:effect/type :dispatch-command
-      :command    {:command/type :cancel-booking :room-id (:from-room event)}
+      :command    {:command/type :cancel-booking
+                   :room-id (:from-room event)
+                   :guest (:guest event)}
       :on-success {:command/type :record-old-room-cancelled :move-id (:move-id event)}
       :on-failure {:command/type :record-old-room-failed    :move-id (:move-id event)}}]
 

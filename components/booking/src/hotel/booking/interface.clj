@@ -14,8 +14,11 @@
 
 (defn- run-use-case! [handle system command]
   (let [result (handle system command)]
-    (effects/react-all! system (:events result))
-    result))
+    (if (:error result)
+      result
+      (if-let [effect-result (effects/react-all! system (:events result))]
+        (assoc result :effect-errors (:errors effect-result))
+        result))))
 
 ;; ---- state-changing use cases (one task = one command) ----
 (defn book-room!         [system command] (run-use-case! book/handle system command))

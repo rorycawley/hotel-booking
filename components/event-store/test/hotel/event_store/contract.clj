@@ -9,6 +9,14 @@
 (def e2 {:event/type :booking-cancelled :room-id "1"})
 (def e3 {:event/type :room-booked       :room-id "2"})
 
+(defn- thrown-conflict? [f]
+  (try
+    (f)
+    false
+    (catch clojure.lang.ExceptionInfo e
+      (= :concurrency-conflict
+         (:hotel.event-store/error (ex-data e))))))
+
 (defn verify-contract
   "fresh-store: 0-arg fn returning an EMPTY store."
   [fresh-store]
@@ -37,5 +45,12 @@
   (testing "a stale expected-version is rejected (optimistic concurrency)"
     (let [store (fresh-store)]
       (es/append-events! store "room-1" 0 [e1])
-      (is (thrown? Exception
-                   (es/append-events! store "room-1" 0 [e1]))))))
+      (is (thrown-conflict?
+           #(es/append-events! store "room-1" 0 [e1])))))
+
+  (testing "a future expected-version is rejected instead of creating gaps"
+    (let [store (fresh-store)]
+      (es/append-events! store "room-1" 0 [e1])
+      (is (thrown-conflict?
+           #(es/append-events! store "room-1" 10 [e2])))
+      (is (= [e1] (es/read-stream store "room-1"))))))
