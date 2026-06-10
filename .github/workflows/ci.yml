@@ -6,6 +6,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Test and Build
@@ -35,16 +39,37 @@ jobs:
           chmod +x linux-install.sh
           sudo ./linux-install.sh
 
+      - name: Add ~/.local/bin to PATH
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Cache clj-kondo
+        id: cache-clj-kondo
+        uses: actions/cache@v5
+        with:
+          path: ~/.local/bin/clj-kondo
+          key: clj-kondo-${{ runner.os }}-v2026.04.15
+
       - name: Install clj-kondo
+        if: steps.cache-clj-kondo.outputs.cache-hit != 'true'
         run: |
           curl -sLO https://raw.githubusercontent.com/clj-kondo/clj-kondo/master/script/install-clj-kondo
           chmod +x install-clj-kondo
-          sudo ./install-clj-kondo
+          ./install-clj-kondo --dir "$HOME/.local/bin" --version 2026.04.15
+
+      - name: Cache cljfmt
+        id: cache-cljfmt
+        uses: actions/cache@v5
+        with:
+          path: ~/.local/bin/cljfmt
+          key: cljfmt-${{ runner.os }}-0.13.0
 
       - name: Install cljfmt
+        if: steps.cache-cljfmt.outputs.cache-hit != 'true'
         run: |
           curl -sL https://github.com/weavejester/cljfmt/releases/download/0.13.0/cljfmt-0.13.0-linux-amd64.tar.gz \
-            | sudo tar -xz -C /usr/local/bin
+            | tar -xz -C "$HOME/.local/bin"
 
       - name: Format check
         run: cljfmt check components bases development projects
@@ -52,11 +77,11 @@ jobs:
       - name: Lint
         run: clj-kondo --lint components bases development projects
 
-      - name: Run fast tests
-        run: clojure -X:dev:test
-
       - name: Check Polylith boundaries
         run: clojure -M:poly check
+
+      - name: Run fast tests
+        run: clojure -X:dev:test
 
       - name: Build deployable jar
         working-directory: projects/hotel-system
