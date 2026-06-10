@@ -1,0 +1,12 @@
+{:deps {org.clojure/clojure {:mvn/version "1.11.3"}
+        hotel/booking       {:local/root "../../components/booking"}
+        hotel/event-store   {:local/root "../../components/event-store"}
+        hotel/integration   {:local/root "../../components/integration"}
+        hotel/notifications {:local/root "../../components/notifications"}
+        hotel/clock         {:local/root "../../components/clock"}
+        hotel/system        {:local/root "../../components/system"}
+        hotel/rest-api      {:local/root "../../bases/rest-api"}}
+ :aliases
+ {:build {:deps  {io.github.clojure/tools.build {:mvn/version "0.10.5"}}
+          :paths ["."]
+          :ns-default build}}}

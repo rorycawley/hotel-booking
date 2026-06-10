@@ -1,0 +1,2 @@
+{:paths ["src"]
+ :deps  {com.stuartsierra/component {:mvn/version "1.1.0"}}}

@@ -1,0 +1,29 @@
+{:aliases
+ {;; clojure -M:dev -M:repl  /  clojure -M:dev   -> REPL over every brick
+  :dev  {:extra-paths ["development/src"]
+         :extra-deps  {org.clojure/clojure {:mvn/version "1.11.3"}
+                       hotel/booking       {:local/root "components/booking"}
+                       hotel/event-store   {:local/root "components/event-store"}
+                       hotel/integration   {:local/root "components/integration"}
+                       hotel/notifications {:local/root "components/notifications"}
+                       hotel/clock         {:local/root "components/clock"}
+                       hotel/system        {:local/root "components/system"}
+                       hotel/rest-api      {:local/root "bases/rest-api"}
+                       org.clojure/tools.namespace {:mvn/version "1.5.0"}}}
+
+  ;; clojure -X:dev:test            -> fast suite (pure + in-memory, no I/O)
+  ;; clojure -X:dev:test :excludes '[]'  -> incl. ^:integration (needs DATABASE_URL)
+  :test {:extra-paths ["components/booking/test"
+                       "components/event-store/test"
+                       "bases/rest-api/test"]
+         :extra-deps  {io.github.cognitect-labs/test-runner
+                       {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
+         :exec-fn     cognitect.test-runner.api/test
+         :exec-args   {:dirs ["components/booking/test"
+                              "components/event-store/test"
+                              "bases/rest-api/test"]
+                       :excludes [:integration]}}
+
+  ;; clojure -M:poly check / info / test   -> Polylith's enforcement + incremental tests
+  :poly {:extra-deps {polylith/clj-poly {:mvn/version "0.2.21"}}
+         :main-opts  ["-m" "polylith.clj.core.poly-cli.core"]}}}
