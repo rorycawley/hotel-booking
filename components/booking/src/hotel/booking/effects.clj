@@ -25,8 +25,15 @@
                              (select-keys effect [:guest :room-id :check-in :check-out]))
 
     :publish
-    (if (contracts/valid? (:topic effect) (:payload effect))
+    (cond
+      (not (contracts/known-topic? (:topic effect)))
+      {:error :unknown-integration-topic
+       :topic (:topic effect)}
+
+      (contracts/valid? (:topic effect) (:payload effect))
       (pub/publish! publisher (:topic effect) (:payload effect))
+
+      :else
       {:error :invalid-integration-event
        :topic (:topic effect)})
 
@@ -40,12 +47,15 @@
            (execute! system {:effect/type :dispatch-command
                              :command (assoc failure :reason (:error result))}))
           result)
-        (or (error-result (react-all! system (:events result)))
-            (when-let [success (:on-success effect)]
-              (error-result
-               (execute! system {:effect/type :dispatch-command
-                                 :command success})))
-            result)))))
+        ;; Command succeeded: fire reactors AND advance the process.
+        ;; on-success carries the PM's next step - skipping it on a
+        ;; reactor failure would strand the process mid-flight.
+        (let [react-err   (error-result (react-all! system (:events result)))
+              success-err (when-let [success (:on-success effect)]
+                            (error-result
+                             (execute! system {:effect/type :dispatch-command
+                                               :command success})))]
+          (or success-err react-err result))))))
 
 (defn react-all!
   "For each new event, ask every reactor (pure) what should happen,

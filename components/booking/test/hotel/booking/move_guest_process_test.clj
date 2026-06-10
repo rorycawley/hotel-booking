@@ -63,10 +63,30 @@
 (deftest a-failed-second-step-compensates-by-recancelling-the-new-room
   (let [[effect] (pm/react {:event/type :move-old-room-failed
                             :move-id "m1" :to-room "103"
+                            :guest {:name "Ada" :email "ada@example.com"}
                             :reason :room-not-booked})]
     (is (= :cancel-booking (get-in effect [:command :command/type])))
     (is (= "103"           (get-in effect [:command :room-id])))
+    ;; ownership guard MUST carry through compensation: if the to-room
+    ;; was re-booked by a different guest while step 2 was failing,
+    ;; cancel-booking refuses rather than cancelling someone else.
+    (is (= {:name "Ada" :email "ada@example.com"}
+           (get-in effect [:command :guest])))
     (is (= :record-compensated (get-in effect [:on-success :command/type])))))
+
+(deftest recording-old-room-failed-denormalises-guest-onto-the-event
+  ;; The compensation reactor reads :guest off the event - the decider
+  ;; must put it there from PM state.
+  (let [history [requested
+                 {:event/type :move-new-room-booked
+                  :move-id "m1" :from-room "102"
+                  :guest {:name "Ada" :email "ada@example.com"}}]
+        {:keys [events]} (decider/decide pm/decider history
+                                         {:command/type :record-old-room-failed
+                                          :move-id "m1"
+                                          :reason :booking-guest-mismatch})]
+    (is (= {:name "Ada" :email "ada@example.com"}
+           (:guest (first events))))))
 
 (deftest terminal-and-uninteresting-events-trigger-nothing
   (is (nil? (pm/react {:event/type :move-old-room-cancelled :move-id "m1"})))

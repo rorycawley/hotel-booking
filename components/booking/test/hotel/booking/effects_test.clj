@@ -42,6 +42,36 @@
     (is (= :invalid-integration-event (:error result)))
     (is (= [] @(:published (:publisher sys))))))
 
+(deftest publish-to-an-unregistered-topic-is-a-distinct-programmer-error
+  ;; Mixing "topic not in the contract registry" with "payload is wrong"
+  ;; hides the actual bug (someone forgot to register the contract).
+  (let [sys (system/test-system)
+        result (effects/execute! sys {:effect/type :publish
+                                      :topic "booking.no-such-topic"
+                                      :payload {:type "Whatever" :version 1}})]
+    (is (= :unknown-integration-topic (:error result)))
+    (is (= "booking.no-such-topic" (:topic result)))
+    (is (= [] @(:published (:publisher sys))))))
+
+(deftest reactor-failures-do-not-block-on-success-continuations
+  ;; If a reactor effect fails, on-success (the PM's next step) must
+  ;; still fire - otherwise process managers get stranded mid-flight.
+  (let [advanced? (atom false)
+        sys {:reactors [(fn [_]                                 ; every event
+                          [{:effect/type :publish
+                            :topic "booking.no-such-topic"      ; will error
+                            :payload {}}])]
+             :command-handlers
+             {:first  (fn [_ _] {:events [{:event/type :something}]})
+              :next!  (fn [_ _] (reset! advanced? true) {:events []})}}
+        result (effects/execute! sys {:effect/type :dispatch-command
+                                      :command {:command/type :first}
+                                      :on-success {:command/type :next!}})]
+    (is @advanced? "on-success ran despite the reactor failure")
+    (is (= :effect-errors (:error result)))
+    (is (= :unknown-integration-topic (-> result :errors first :error))
+        "the reactor failure is still surfaced to the caller")))
+
 (deftest reactor-errors-are-surfaced-on-the-use-case-result
   (let [sys (assoc (system/test-system)
                    :reactors [(fn [_]

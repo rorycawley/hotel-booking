@@ -95,3 +95,22 @@
     (is (= ["101" "103"] (api/available-rooms sys))
         "102 stays booked by Bob; 103 is compensated back to free")
     (is (= :failed (move-status sys "m1")))))
+
+(def ^:private failing-publish-on-room-booked
+  (fn [event]
+    (when (= :room-booked (:event/type event))
+      [{:effect/type :publish
+        :topic       "booking.room-booked"
+        :payload     {:type "RoomBooked"}}])))   ; missing :version etc.
+
+(deftest a-failing-reactor-does-not-strand-the-process-manager
+  ;; Side effects (publish, notify) are best-effort - they must NOT block
+  ;; the process manager from advancing, or moves get stuck mid-flight.
+  (let [sys (update (system/test-system) :reactors conj
+                    failing-publish-on-room-booked)]
+    (run!* api/book-room! sys ada-books-102)
+    (run!* api/move-guest! sys move-ada-102->103)
+    (is (= :completed (move-status sys "m1"))
+        "PM reached terminal :completed even though a reactor effect failed")
+    (is (= ["101" "102"] (api/available-rooms sys))
+        "the move actually happened end to end")))

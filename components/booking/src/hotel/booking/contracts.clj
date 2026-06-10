@@ -19,7 +19,16 @@
 (def by-topic
   {"booking.room-booked" room-booked-v1})
 
+(defn known-topic?
+  "Is this topic registered in the published language?
+   Unknown means a reactor was added without a contract - a programmer
+   error, not a payload error - so callers can distinguish."
+  [topic]
+  (contains? by-topic topic))
+
 (defn valid?
-  "Is this payload a legal message on this topic?"
+  "Is this payload a legal message on this topic?
+   Returns false for unknown topics too - use known-topic? first to tell
+   the cases apart."
   [topic payload]
   (boolean (some-> (by-topic topic) (m/validate payload))))

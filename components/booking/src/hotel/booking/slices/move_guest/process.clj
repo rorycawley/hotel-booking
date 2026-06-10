@@ -108,6 +108,7 @@
        (step state :cancelling-old-room
              {:event/type :move-old-room-failed
               :move-id (:move-id state) :to-room (:to-room state)
+              :guest (:guest state)
               :reason (:reason command)})
 
        :record-compensated
@@ -139,10 +140,15 @@
       :on-failure {:command/type :record-old-room-failed    :move-id (:move-id event)}}]
 
     ;; COMPENSATION: step 2 failed -> undo step 1 (re-cancel the new room).
-    ;; If compensation itself fails, a real system alerts a human/operator.
+    ;; Carry :guest so a re-booked to-room (raced by another guest while
+    ;; the PM was mid-flight) is refused by the ownership guard rather
+    ;; than silently cancelled. If compensation itself fails, a real
+    ;; system alerts a human/operator.
     :move-old-room-failed
     [{:effect/type :dispatch-command
-      :command    {:command/type :cancel-booking :room-id (:to-room event)}
+      :command    {:command/type :cancel-booking
+                   :room-id (:to-room event)
+                   :guest   (:guest event)}
       :on-success {:command/type :record-compensated :move-id (:move-id event)}}]
 
     nil))
