@@ -40,7 +40,11 @@ development/src/user.clj the REPL (start!/reset/run!*) over every brick
    reach into each other".
 2. **Bricks are the units of change** (ADR-0002). Today `booking` is one
    capability-brick; capability #2 becomes a sibling brick, and they may
-   talk only through interfaces or published integration events.
+   talk only through interfaces or published integration events. *Inside*
+   a brick, internal layout is a local choice — `booking`'s vertical
+   slices are this brick's preference, not a workspace rule. A future
+   brick can organize by entity, classical layer, or whatever fits its
+   domain.
 3. **Projects choose impls.** The `system` brick's configurator selects
    in-memory vs postgres/rabbit/twilio at runtime config. (The other
    Polylith idiom - two bricks sharing one interface name, chosen per
