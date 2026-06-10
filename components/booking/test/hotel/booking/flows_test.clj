@@ -11,12 +11,8 @@
             [hotel.booking.slices.available-rooms.query :as available]))
 
 (defn run!*
-  "decide+evolve via the handler, then REACT to the new events.
-   This is exactly what the production dispatcher does."
   [handle sys command]
-  (let [result (handle sys command)]
-    (effects/react-all! sys (:events result))
-    result))
+  (handle sys command))
 
 (def ada-books-102
   {:room-id "102" :guest {:name "Ada" :email "ada@example.com"}
