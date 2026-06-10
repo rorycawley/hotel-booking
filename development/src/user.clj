@@ -7,14 +7,12 @@
             [clojure.tools.namespace.repl :as tn]
             [hotel.system.interface :as system]
             [hotel.booking.interface :as api]      ; <- the input pins
-            [hotel.booking.effects :as effects]
             [hotel.booking.decider :as decider]
             [hotel.booking.room.fsm :as fsm]
             [hotel.booking.slices.book-room.decide :as book-core]
             [hotel.booking.slices.move-guest.process :as pm]
             [hotel.event-store.interface :as es]
-            [hotel.clock.interface :as clock]
-            [hotel.clock.deterministic :as det-clock]))
+            [hotel.clock.interface :as clock]))
 
 (tn/set-refresh-dirs "components" "bases" "development")
 
@@ -45,12 +43,12 @@
   (start!)
 
   ;; ---- 2. drive use cases through the DRIVING PORT ----
-  (run!* booking/book-room!
+  (run!* api/book-room!
          {:room-id "102"
           :guest {:name "Ada" :email "ada@example.com"}
           :check-in "2026-07-01" :check-out "2026-07-03"})
 
-  (booking/available-rooms the-system)            ; => ["101" "103"]
+  (api/available-rooms the-system)            ; => ["101" "103"]
   @(:sent (:guest-notifications the-system))  ; domain notifications, no prose
   @(:published (:publisher the-system))       ; integration events
   @(:db (:event-store the-system))            ; peek at the whole event store
@@ -71,18 +69,18 @@
       (fsm/evolve {:event/type :booking-cancelled :room-id "102"}))
 
   ;; ---- 4. run the PROCESS MANAGER: two streams, no distributed tx ----
-  (run!* booking/move-guest! {:move-id "m1"
+  (run!* api/move-guest! {:move-id "m1"
                           :guest {:name "Ada" :email "ada@example.com"}
                           :from-room "102" :to-room "103"
                           :check-in "2026-07-01" :check-out "2026-07-03"})
-  (booking/available-rooms the-system)            ; 103 booked, 102 freed
+  (api/available-rooms the-system)            ; 103 booked, 102 freed
   (es/read-stream (:event-store the-system) "move-m1")   ; the PM's own story
   (decider/current-state pm/decider
-    (es/read-stream (:event-store the-system) "move-m1"))
+                         (es/read-stream (:event-store the-system) "move-m1"))
 
   ;; ---- 5. time: stamped as evidence, never used for order ----
   (clock/set-uncertainty! (:clock the-system) 2000)
-  (run!* booking/book-room! {:room-id "101"
+  (run!* api/book-room! {:room-id "101"
                          :guest {:name "Eve" :email "eve@example.com"}
                          :check-in "2026-07-05" :check-out "2026-07-06"})
   (map :recorded-at (es/read-all (:event-store the-system)))
@@ -90,9 +88,9 @@
                       {:earliest 50 :latest 2050})   ; => true: incomparable
 
   ;; ---- 6. other use cases ----
-  (run!* booking/cancel-booking! {:room-id "103"})
-  (run!* booking/decommission-room! {:room-id "103"})
-  (run!* booking/book-room! {:room-id "103"      ; terminal!
+  (run!* api/cancel-booking! {:room-id "103"})
+  (run!* api/decommission-room! {:room-id "103"})
+  (run!* api/book-room! {:room-id "103"      ; terminal!
                          :guest {:name "Eve" :email "eve@example.com"}
                          :check-in "2026-07-01" :check-out "2026-07-02"})
   ;; => {:error :stream-is-terminal}

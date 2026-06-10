@@ -7,8 +7,7 @@
             [hotel.booking.interface :as api]
             [hotel.booking.slices.move-guest.process :as pm]
             [hotel.booking.decider :as decider]
-            [hotel.event-store.interface :as es]
-            [hotel.booking.slices.available-rooms.query :as available]))
+            [hotel.event-store.interface :as es]))
 
 (defn run!*
   [handle sys command]

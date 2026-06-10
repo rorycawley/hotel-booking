@@ -35,6 +35,23 @@ jobs:
           chmod +x linux-install.sh
           sudo ./linux-install.sh
 
+      - name: Install clj-kondo
+        run: |
+          curl -sLO https://raw.githubusercontent.com/clj-kondo/clj-kondo/master/script/install-clj-kondo
+          chmod +x install-clj-kondo
+          sudo ./install-clj-kondo
+
+      - name: Install cljfmt
+        run: |
+          curl -sL https://github.com/weavejester/cljfmt/releases/download/0.13.0/cljfmt-0.13.0-linux-amd64.tar.gz \
+            | sudo tar -xz -C /usr/local/bin
+
+      - name: Format check
+        run: cljfmt check components bases development projects
+
+      - name: Lint
+        run: clj-kondo --lint components bases development projects
+
       - name: Run fast tests
         run: clojure -X:dev:test
 

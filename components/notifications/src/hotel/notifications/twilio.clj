@@ -11,16 +11,16 @@
   notify/GuestNotifications
   (confirm-booking! [_ {:keys [guest room-id check-in check-out]}]
     (http/post "https://api.sendgrid.com/v3/mail/send"
-      {:headers      {"Authorization" (str "Bearer " api-key)}
-       :content-type :json
-       :body (json/generate-string
-              {:personalizations [{:to [{:email (:email guest)}]}]
-               :from    {:email from}
-               :subject "Booking confirmed"
-               :content [{:type "text/plain"
-                          :value (str "Dear " (:name guest) ", room " room-id
-                                      " is yours from " check-in
-                                      " to " check-out ".")}]})})))
+               {:headers      {"Authorization" (str "Bearer " api-key)}
+                :content-type :json
+                :body (json/generate-string
+                       {:personalizations [{:to [{:email (:email guest)}]}]
+                        :from    {:email from}
+                        :subject "Booking confirmed"
+                        :content [{:type "text/plain"
+                                   :value (str "Dear " (:name guest) ", room " room-id
+                                               " is yours from " check-in
+                                               " to " check-out ".")}]})})))
 
 (defn create [{:keys [api-key from]}]
   (->TwilioSendGridNotifications api-key from))

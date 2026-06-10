@@ -34,20 +34,20 @@
   (read-stream [_ stream-id]
     (mapv row->event
           (jdbc/execute! datasource
-            ["select payload from events where stream_id = ? order by version"
-             stream-id])))
+                         ["select payload from events where stream_id = ? order by version"
+                          stream-id])))
   (append-events! [_ stream-id expected-version events]
     (try
       (jdbc/with-transaction [tx datasource]
         (let [actual-version (:version (first (jdbc/execute! tx
-                                               ["select count(*) as version from events where stream_id = ?"
-                                                stream-id])))]
+                                                             ["select count(*) as version from events where stream_id = ?"
+                                                              stream-id])))]
           (when (not= actual-version expected-version)
             (conflict! stream-id expected-version actual-version))
           (doseq [[i e] (map-indexed vector events)]
             (jdbc/execute! tx
-              ["insert into events (stream_id, version, payload) values (?, ?, ?::jsonb)"
-               stream-id (+ expected-version i 1) (json/generate-string e)]))))
+                           ["insert into events (stream_id, version, payload) values (?, ?, ?::jsonb)"
+                            stream-id (+ expected-version i 1) (json/generate-string e)]))))
       (catch SQLException e
         (if (unique-violation? e)
           (conflict! stream-id expected-version nil)
@@ -55,6 +55,6 @@
   (read-all [_]
     (mapv row->event
           (jdbc/execute! datasource
-            ["select payload from events order by global_position"]))))
+                         ["select payload from events order by global_position"]))))
 
 (defn create [jdbc-url] (map->PostgresEventStore {:jdbc-url jdbc-url}))

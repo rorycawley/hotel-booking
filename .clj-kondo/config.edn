@@ -1,0 +1,7 @@
+;; Workspace-level clj-kondo config. Library hooks live under
+;; .clj-kondo/imports/ and are loaded automatically.
+{:linters
+ {;; Polylith interface stubs destructure config keys for API
+  ;; documentation but pass `:as config` straight through to impls.
+  ;; The keys aren't unused — they're the contract.
+  :unused-binding {:exclude-destructured-keys-in-fn-args true}}}

@@ -1,5 +1,11 @@
 #!/usr/bin/env sh
 set -eu
 
-echo "pre-commit: running clojure -X:dev:test"
+echo "pre-commit: cljfmt check components bases development projects"
+cljfmt check components bases development projects
+
+echo "pre-commit: clj-kondo --lint components bases development projects"
+clj-kondo --lint components bases development projects
+
+echo "pre-commit: clojure -X:dev:test"
 clojure -X:dev:test

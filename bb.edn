@@ -1,0 +1,56 @@
+;; Babashka task runner — `bb tasks` to list, `bb <name>` to run.
+;; Each task wraps one of the commands documented in CLAUDE.md.
+{:tasks
+ {;; ---- structure + fast feedback ----
+  check
+  {:doc "Polylith boundary check (run before every push)."
+   :task (shell "clojure -M:poly check")}
+
+  lint
+  {:doc "clj-kondo over the workspace."
+   :task (shell "clj-kondo --lint components bases development projects")}
+
+  fmt
+  {:doc "cljfmt fix — rewrite source to the canonical format."
+   :task (shell "cljfmt fix components bases development projects")}
+
+  fmt:check
+  {:doc "cljfmt check — fail if anything needs reformatting."
+   :task (shell "cljfmt check components bases development projects")}
+
+  info
+  {:doc "Show the Polylith workspace map."
+   :task (shell "clojure -M:poly info")}
+
+  test
+  {:doc "Fast suite: pure + in-memory, zero I/O."
+   :task (shell "clojure -X:dev:test")}
+
+  test:all
+  {:doc "Full suite incl. Postgres contract test ($DATABASE_URL or localhost/booking)."
+   :task (let [db (or (System/getenv "DATABASE_URL")
+                      "jdbc:postgresql://localhost/booking")]
+           (shell {:extra-env {"DATABASE_URL" db}}
+                  "clojure" "-X:dev:test" ":excludes" "[]"))}
+
+  test:inc
+  {:doc "Polylith change-aware incremental tests."
+   :task (shell "clojure -M:poly test")}
+
+  verify
+  {:doc "Pre-push gate: fmt:check + lint + boundary check + fast suite."
+   :depends [fmt:check lint check test]}
+
+  ;; ---- REPL ----
+  dev
+  {:doc "REPL over every brick. Then (start!), (reset)."
+   :task (shell "clojure -M:dev")}
+
+  ;; ---- build the one deployable ----
+  uber
+  {:doc "Build the uberjar for hotel-system."
+   :task (shell {:dir "projects/hotel-system"} "clojure -T:build uber")}
+
+  image
+  {:doc "Build the container image, tagged hotel-system."
+   :task (shell "docker build -t hotel-system .")}}}
