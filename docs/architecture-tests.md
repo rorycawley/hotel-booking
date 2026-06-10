@@ -27,6 +27,27 @@ import. Polylith doesn't read them. Examples:
 Architecture tests fill that gap. They're the same shape as
 `poly check`: read source files, assert a rule, fail the build.
 
+## How they relate to the behaviour-test policy
+
+CLAUDE.md says "Refactoring must not require test changes" — that rule
+governs the **behaviour suite** (Ian Cooper TDD: history in, command in,
+events or error out, asserted through the slice's public exports).
+Fitness tests are a different category and play by different rules:
+
+|                  | Behaviour test                      | Fitness test                    |
+| ---------------- | ----------------------------------- | ------------------------------- |
+| Asserts          | What the system does                | How it's structured             |
+| Locked to        | The slice's public API              | File paths and function names   |
+| Refactor-safe?   | Yes — that's the point              | No — also the point             |
+| Shape            | Given / When / Then                 | Static scan, assert emptiness   |
+| Lives in         | `*_test.clj` next to each slice     | `arch_test.clj`                 |
+
+Renaming `effects.clj` will break rules 2 and 3. That is the intended
+behaviour: a rename moves the contract gate's home, and we want a
+failing test the moment the structural assumption stops holding. The
+"no test churn on refactor" rule is for the behaviour suite, not for
+the architectural conscience.
+
 ## What we check today
 
 Three rules. All static scans over `.clj` files under

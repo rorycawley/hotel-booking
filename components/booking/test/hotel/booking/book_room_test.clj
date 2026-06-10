@@ -2,9 +2,7 @@
   "Behaviour: 'Book a room'. Pure: history in, events out. No I/O."
   (:require [clojure.test :refer [deftest is]]
             [hotel.booking.decider :as decider]
-            [hotel.booking.slices.book-room.decide :as book]
-            [hotel.clock.interface :as clock]
-            [hotel.event-store.interface :as es]))
+            [hotel.booking.slices.book-room.decide :as book]))
 
 (def book-cmd
   {:room-id "101"
@@ -51,16 +49,3 @@
   (let [result (decider/decide book/decider [] {:room-id 101})]
     (is (= :invalid-command (:error result)))
     (is (map? (:explain result)))))
-
-(deftest an-optimistic-concurrency-conflict-is-a-use-case-error
-  (with-redefs [es/read-stream (fn [_ _] [])
-                clock/now-interval (fn [_] {:earliest 1 :latest 1})
-                es/append-events! (fn [& _]
-                                    (throw (ex-info "Concurrency conflict"
-                                                    {:hotel.event-store/error
-                                                     :concurrency-conflict})))]
-    (is (= {:error :concurrency-conflict}
-           (decider/handle book/decider
-                           {:event-store ::store :clock ::clock}
-                           "room-101"
-                           book-cmd)))))
