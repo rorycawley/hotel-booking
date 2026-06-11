@@ -41,6 +41,10 @@
   {:doc "Pre-push gate: fmt:check + lint + boundary check + fast suite."
    :depends [fmt:check lint check test]}
 
+  all
+  {:doc "Everything CI runs: verify + uberjar build."
+   :depends [verify uber]}
+
   ;; ---- REPL ----
   dev
   {:doc "REPL over every brick. Then (start!), (reset)."
