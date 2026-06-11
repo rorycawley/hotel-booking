@@ -237,6 +237,20 @@ one-line registrations — not six layers. Slices that share an aggregate (book 
 decommission all act on a room) **share one kernel** (`room/fsm`), which is what keeps
 their notion of `:booked` consistent.
 
+**What's fine to share between slices.** The rule, in Bogard's words: **"minimise coupling
+*between* slices, maximise coupling *within* a slice."** A slice's `decide.clj`,
+`handler.clj`, and `react.clj` are *meant* to be tightly coupled — they're one unit, don't
+apologise for the cohesion or reach for an abstraction that breaks it up. Across slices,
+extract when it lets one change land in *one* place instead of three. Inside `booking`, the
+justified examples are right there: `room/fsm.clj` and `room/events.clj` (one aggregate,
+several slices), `decider.clj` (generic runner), `effects.clj` (interpreter), `contracts.clj`
+(closed integration schemas). What we *don't* share: state, helpers that quietly couple
+slices to each other's events, or a "common" namespace that drifts into a god-module.
+
+**The reviewer's test (also Bogard).** A new slice should *add* code — a new folder, two
+one-line registrations — not force edits to existing slices. If a new use case touches many
+existing slices, the boundaries are wrong.
+
 **The rule it buys you.** Local reasoning, local change, local tests. If a "simple" change
 touches many folders, the boundaries are wrong.
 
