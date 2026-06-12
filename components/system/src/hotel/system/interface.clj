@@ -6,3 +6,4 @@
 (defn in-memory-system [] (core/in-memory-system))
 (defn prod-system [config] (core/prod-system config))
 (defn test-system [] (core/test-system))
+(def  flush!      core/flush!)

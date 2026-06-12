@@ -1,2 +1,6 @@
 {:paths ["src"]
- :deps  {metosin/malli {:mvn/version "0.16.4"}}}
+ :deps  {metosin/malli {:mvn/version "0.16.4"}
+         hotel/document-store {:local/root "../document-store"}
+         hotel/ids            {:local/root "../ids"}
+         hotel/problems       {:local/root "../problems"}
+         hotel/subject-keys   {:local/root "../subject-keys"}}}

@@ -1,2 +1,12 @@
 {:paths ["src"]
- :deps  {com.stuartsierra/component {:mvn/version "1.1.0"}}}
+ :deps  {com.stuartsierra/component {:mvn/version "1.1.0"}
+         hotel/booking       {:local/root "../booking"}
+         hotel/event-store   {:local/root "../event-store"}
+         hotel/integration   {:local/root "../integration"}
+         hotel/notifications {:local/root "../notifications"}
+         hotel/clock         {:local/root "../clock"}
+         hotel/ids           {:local/root "../ids"}
+         hotel/document-store {:local/root "../document-store"}
+         hotel/outbox-relay   {:local/root "../outbox-relay"}
+         hotel/problems       {:local/root "../problems"}
+         hotel/subject-keys   {:local/root "../subject-keys"}}}

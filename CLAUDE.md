@@ -3,14 +3,16 @@
 ## Commands (Polylith workspace - see docs/polylith.md)
 - Enforce module boundaries (run before every push): `clojure -M:poly check`
 - Fast test suite (pure + in-memory, zero I/O, run constantly): `clojure -X:dev:test`
-- Full suite incl. Postgres contract test: `DATABASE_URL=jdbc:postgresql://localhost/booking clojure -X:dev:test :excludes '[]'`
+- Full suite incl. Postgres/RabbitMQ/MinIO integration tests: `clojure -X:dev:test :excludes '[]'` (Testcontainers starts Docker dependencies)
 - Incremental change-aware tests: `clojure -M:poly test`
 - REPL over all bricks: `clojure -M:dev` then `(start!)`, after edits `(reset)` — see `development/src/user.clj`
 - Build the one deployable: `cd projects/hotel-system && clojure -T:build uber`; container: `docker build -t hotel-system .`
 
 ## Architecture invariants — never break these
+**Top goal: determinism.** Given the same starting event log and the same accepted command sequence, domain decisions, replay, projections, and recovery must produce the same outcomes. Entropy is allowed only at the shell: time via the Clock port, identity via the IdSource port, cryptographic randomness inside crypto adapters, and external I/O behind ports. Tests and replay use deterministic adapters; production adapters may use real clocks/randomness, but their outputs must be captured as data in the event log or command/result cache before the core sees them. Concurrency must be serialized by explicit mechanisms (stream versions, global log position, projection locks, idempotency keys), never by hoping thread scheduling is kind.
+
 1. **Bricks and boundaries (Polylith).** Modules are bricks under `components/` and `bases/`; a brick's ONLY public namespace is `hotel.<brick>.interface`. Cross-brick requires must target interfaces — `clojure -M:poly check` enforces this; never work around it. The `booking` brick is the application (inside the hexagon); port bricks' interfaces are the ports, their impl namespaces the adapters; the `system` brick is the only one that sees every interface.
-2. **The core is pure.** `decide`, `evolve`, `react`, projections: no I/O, no clock, no randomness, no port calls. Time enters only via the Clock driven port: `decider/handle` stamps accepted events with `:recorded-at {:earliest :latest}` uncertainty intervals. NEVER order by timestamps - temporal/legal order is the event store's global position; intervals are evidence. Rationale + precedents: `docs/adr/0001-order-by-log-position-not-by-clock.md` - read it before changing anything ordering- or time-related. Reactors return effect DATA; only `booking/effects.clj` and `booking/decider.clj`'s `handle` touch ports.
+2. **The core is pure.** `decide`, `evolve`, `react`, projections: no I/O, no clock, no randomness, no port calls. Time enters only via the Clock driven port; generated IDs enter only via the IdSource driven port. `decider/handle` stamps accepted events with `:recorded-at {:earliest :latest}` uncertainty intervals and shell-minted identity. NEVER order by timestamps - temporal/legal order is the event store's global position; intervals are evidence. Rationale + precedents: `docs/adr/0001-order-by-log-position-not-by-clock.md` - read it before changing anything ordering- or time-related. Reactors return effect DATA; only explicit shell namespaces (`decider.clj`, `effects.clj`, `recovery.clj`, `pii.clj`, query handlers, document handler) may touch ports.
 3. **State-changing slices compose Deciders**: `{:command-schema :initial-state :decide :evolve :terminal?}`. Several slices may share one aggregate's kernel (`initial-state`/`evolve`/`terminal?`) — the room slices do; the kernel keeps them consistent. State is always explicit: a named-status FSM when the lifecycle is modal (usually — never boolean flags), or accumulative data + invariants when that is the truthful model. Process managers are ALWAYS FSMs. Terminal state designed up front.
 4. **One use case = one command = one stream append.** Never issue two commands from one handler/endpoint. Multi-step intents are processes: command → events → reactor → next command (see `slices/move_guest/process.clj`).
 5. **New driven port** ⇒ a new port brick (interface in DOMAIN language) (no technology vocabulary), test adapter FIRST, production adapter second, both passing one shared contract test.
@@ -23,8 +25,9 @@
 - Tests assert BEHAVIOUR through the slice's exports (decider, projection, reactor, driving port) — never internals, call counts, atom shapes, or SQL.
 - One test per Given/When/Then scenario: Given = events, When = command, Then = events or error.
 - No mocks. The core needs none (it's pure); edges use the in-memory adapters.
+- Tests must control entropy: use deterministic clock/IDs and explicit command/correlation IDs when crossing a driving boundary.
 - Refactoring must not require test changes; adding internal helper fns must not add tests.
-- Almost all tests are pure/no-I/O; only `^:integration` tests may touch Postgres.
+- Almost all tests are pure/no-I/O; only `^:integration` tests may touch Postgres, RabbitMQ, or MinIO.
 
 ## Style (Elements of Clojure)
 - Data > functions > macros: commands, events, effects are plain maps. No domain DSLs.

@@ -3,6 +3,12 @@
 Patterns implemented from:
 - thinkbeforecoding.com — *Functional Event Sourcing Decider* (Chassaing, 2021)
 - ismaelcelis.com — *The Decide, Evolve, React pattern* (Celis, 2024)
+- transactional outbox + atomic UPDATE-RETURNING claim, command-id
+  idempotency cache, PM recovery via deterministic dispatched-command-ids,
+  envelope-encrypted PII + document blobs (GDPR Art. 17 crypto-shredding),
+  multi-party approval as a first-class process manager — all in code,
+  all behaviour-tested, all documented in
+  [`docs/fault-tolerance.md`](docs/fault-tolerance.md) and ADRs 0001–0008.
 
 ## Step 1: The event model (requirements)
 
@@ -42,7 +48,7 @@ trail on the `move-` stream, no distributed transaction.
 
 ## Step 2: The room stream is an explicit finite state machine
 
-`src/booking/room/fsm.clj` — explicit states, not boolean flags:
+`components/booking/src/hotel/booking/room/fsm.clj` — explicit states, not boolean flags:
 
 ```
                RoomBooked              BookingCancelled
@@ -55,7 +61,7 @@ trail on the `move-` stream, no distributed transaction.
 
 ## Step 3: Each slice's core is a Decider (the 7 elements)
 
-Commands, Events, State are plain maps, plus (`src/booking/decider.clj`):
+Commands, Events, State are plain maps, plus (`components/booking/src/hotel/booking/decider.clj`):
 
 ```clojure
 {:initial-state s
@@ -83,10 +89,13 @@ protocol's steps are states by definition.
 ## Step 4: React is pure too
 
 Reactors (`slices/*/react.clj`) take an event and return **effect data**:
-`{:effect/type :send-email ...}` / `{:effect/type :publish ...}`.
-`src/booking/effects.clj` is the single interpreter that turns effect data
-into PORT calls - or, for the `:dispatch-command` effect, into the NEXT
-step of a process (which is itself reacted to, recursively). So: decide PURE → evolve PURE → react PURE → effects at the edge.
+`{:effect/type :notify-booking-confirmed ...}` / `{:effect/type :publish ...}`.
+`components/booking/src/hotel/booking/effects.clj` partitions those
+effects into the transactional bucket (`:publish` → outbox row) and
+the post-commit bucket (notify, `:dispatch-command` for process-manager
+continuations), then interprets the latter after the events commit. So:
+decide PURE → evolve PURE → react PURE → publish effects go to the
+outbox in the same TX → post-commit effects run last.
 
 ## Step 5: Folders scream the model, the hexagon, AND the modules
 
@@ -101,38 +110,62 @@ encapsulation enforced, not hoped for.
 components/                          ◄── the MODULES (bricks)
   booking/                             the capability - INSIDE the hexagon
     src/hotel/booking/
-      interface.clj                    DRIVING PORT: use cases (handle + react)
+      interface.clj                    DRIVING PORT: every use case the app offers
       decider.clj effects.clj app.clj  generic runner, effect interpreter, wiring
+      recovery.clj pii.clj             PM recovery sweep, PII encrypt/decrypt seam
+      upcasters.clj                    schema-version forward migration (ADR-0008-adj.)
       room/fsm.clj room/events.clj     the stream's FSM + event schemas
       contracts.clj                    the published language (integration events)
       slices/<use-case>/               ONE FOLDER PER SLICE (the event model!)
-    test/hotel/booking/                pure GWT + flow + ordering tests
-  event-store/                         a DRIVEN PORT as a brick:
-    src/hotel/event_store/             interface.clj = the port,
-      interface.clj protocol.clj       in_memory.clj + postgres.clj = the adapters
-      in_memory.clj postgres.clj       (contract test holds both to one behaviour)
-  integration/   rabbitmq + in-memory  same shape
-  notifications/ twilio  + recording   same shape, DOMAIN language
+    test/hotel/booking/                pure GWT + flow + ordering + property tests
+  event-store/                         driven port: append-only journal +
+    src/hotel/event_store/             outbox + processed_commands + inbox +
+      interface.clj protocol.clj       projection checkpoints + room_view, all on
+      in_memory.clj postgres.clj       ONE Postgres datasource (in-memory mirror
+      migrations.clj projector.clj     for tests). Migration runner + projector.
+      resources/.../migrations/V*.sql  versioned schema migrations (V1 … V4)
+  outbox-relay/                        background worker draining outbox → broker
+                                       with publisher confirms, backoff, dead letter
+  problems/                            ProblemSink port (in-memory + stderr-JSON)
+                                       for structured operational-failure recording
+  subject-keys/                        per-data-subject AES-256-GCM keys
+                                       (GDPR-shreddable: destroy key = erase data)
+  document-store/                      blob storage: MinIO/S3 + in-memory adapter
+  ids/                                 IdSource port: random in prod, deterministic
+                                       in tests (replay-equality property)
+  integration/   rabbitmq + in-memory  cross-process publisher (DOMAIN language)
+  notifications/ twilio  + recording   guest notification port
   clock/         system + deterministic + interval algebra (ADR-0001)
   system/                              THE CONFIGURATOR: sees every interface,
                                        injects impls via Component
-bases/rest-api/                      ◄── the entry point (task-based HTTP + main)
+bases/rest-api/                      ◄── HTTP entry: task-based routes, /health,
+                                       /ready, /metrics, POST /documents
 projects/hotel-system/               ◄── THE deployable: uberjar via build.clj
 development/src/user.clj             ◄── one REPL over every brick
 Dockerfile                           ◄── two-stage image of the one unit
-docs/adr/                            ADRs 0001-0004 · docs/polylith.md
+docs/adr/                            ADRs 0001–0008 · docs/fault-tolerance.md
+                                     · docs/polylith.md
 ```
 
 Build and run the one deployable unit:
 
 ```bash
 clojure -M:poly check                          # enforce the boundaries
-clojure -X:dev:test                            # fast suite, zero I/O
+clojure -X:dev:test                            # fast suite, ~3 s, zero I/O
+clojure -X:dev:test :excludes '[]'             # full suite, Testcontainers boots
+                                               # Postgres + RabbitMQ + MinIO
 cd projects/hotel-system && clojure -T:build uber
 docker build -t hotel-system . && docker run -p 3000:3000 \
   -e DATABASE_URL=... -e RABBITMQ_URI=... \
-  -e SENDGRID_API_KEY=... -e FROM_EMAIL=... hotel-system
+  -e SENDGRID_API_KEY=... -e FROM_EMAIL=... \
+  hotel-system
 ```
+
+The MinIO adapter is wired into `prod-system` and takes
+`:minio-endpoint`/`-access-key`/`-secret-key`/`-bucket`, but
+`bases/rest-api/.../main.clj` does not pass them yet — add the
+corresponding `MINIO_*` env-var reads to `main` before deploying the
+document-upload feature to production.
 
 ## Why this shape: architecture is a bet on future change
 
@@ -192,10 +225,11 @@ only ever point inward (cross-brick requires may target only `interface` namespa
 **2. Ports are pins on a chip.** The application is a component, like an
 integrated circuit. `hotel.booking.interface` is its input pins - the
 complete list of use cases it offers, one namespace, one page. The
-port bricks' interfaces (event-store, integration, notifications, clock)
-are its output pins - the complete list of
-needs it has. Open those two places and you know everything this
-application can do and everything it depends on.
+port bricks' interfaces (event-store, integration, notifications,
+clock, problems, subject-keys, document-store, ids) are its output
+pins - the complete list of needs it has. Open those two places and
+you know everything this application can do and everything it depends
+on.
 
 **3. Interface ownership is asymmetric (the bit that trips people up).**
 - *Driving side*: the application DEFINES and IMPLEMENTS the API
@@ -245,11 +279,14 @@ structure must FAIL it. Storage-side translation is symmetric: the
 Postgres adapter turns domain events into JSON and back, so neither the
 broker nor the database ever dictates the domain's shape.
 
-Honest gap, on purpose: `react-all!` publishes in-process with no
-delivery guarantee. A production system would publish integration events
-via an outbox or a catch-up subscription on the event store, because
-publishing is I/O and can fail independently of the append. The
-translation boundary shown here is unchanged by that upgrade.
+**This gap is closed.** `:publish` effects are partitioned out at the
+pure-react step and written to an `outbox` table in the SAME Postgres
+transaction as the events. A background relay (`outbox-relay` brick)
+drains the outbox to RabbitMQ with publisher confirms + a return
+listener + atomic UPDATE-RETURNING claim (safe under concurrent
+relays). The translation boundary above is unchanged; only the delivery
+mechanism is now durable. Full account in
+[`docs/fault-tolerance.md`](docs/fault-tolerance.md).
 
 ## Time: recorded as evidence, never trusted for order
 
@@ -274,9 +311,9 @@ So this codebase splits the problem the way Spanner/TrueTime does:
    which the authority ACCEPTED commands, decided by a single
    serialization point with zero clock dependency. The intervals are
    evidence mapping that order onto UTC, not the ordering mechanism.
-   `test/booking/ordering_test.clj` proves the whole argument: two
-   bookings whose intervals overlap (undecidable by clock) are still
-   totally ordered by the log.
+   `components/booking/test/hotel/booking/ordering_test.clj` proves the
+   whole argument: two bookings whose intervals overlap (undecidable by
+   clock) are still totally ordered by the log.
 
 Where NTP/PTP fit: BELOW the port, as adapter + operations concern.
 The deterministic test adapter is settable; the production adapter wraps
@@ -314,29 +351,33 @@ computerizing a tradition, not inventing one.
 ## Step 6: Tests = behaviours, fast suite has zero I/O
 
 ```
-clojure -X:test
+clojure -X:dev:test                     # ~175 fast tests, ~3 seconds
+clojure -X:dev:test :excludes '[]'      # ~183 tests incl. Testcontainers
 ```
 
-```
-test/booking/
-  slices/*_test.clj            PURE: history + command -> events | error
-                               (incl. terminal-state rejection)
-  slices/*reactor tests*       PURE: event -> effect data (incl. no-PII rule)
-  effects_test.clj             effect data reaches the right port (in-memory)
-  flows_test.clj               decide -> evolve -> react, end to end in memory
-  ports/event_store_contract   ONE behaviour spec for every adapter
-  adapters/in_memory_..._test  runs the contract (fast)
-  adapters/postgres_..._test   ^:integration: same contract vs real Postgres
-```
-
-Only the Postgres contract test does I/O; it is excluded by default:
+Shape of the suite:
 
 ```
-DATABASE_URL=jdbc:postgresql://localhost/booking clojure -X:test :excludes '[]'
+components/booking/test/                pure GWT + flow + ordering tests
+  *_properties_test.clj                 22 generative property tests over the
+                                        room FSM, the approval PM, the
+                                        move-guest saga (~3 100 trials per run)
+components/event-store/test/contract.clj   ONE behaviour spec
+  in_memory_test.clj                       runs the contract in-memory (fast)
+  postgres_test.clj                        ^:integration: same contract vs
+                                           real Postgres in a Testcontainer
+components/document-store/test/contract.clj   blob-store contract; in-memory
+  minio_test.clj                              + MinIO Testcontainer adapter
+components/outbox-relay/test/integration_test.clj   ^:integration: kill Rabbit,
+                                                    write events + outbox, restart,
+                                                    drain, assert the message lands
 ```
 
-Tests assert behaviour (events out, effects out, what a guest sees) — never
-implementation (no mocks, call counts, atom shapes, or SQL strings).
+Tests assert behaviour (events out, effects out, what a guest sees,
+what a regulator can read from the audit log) — never implementation
+(no mocks, no call counts, no SQL strings). The architecture-test
+suite enforces the structural rules — see
+[`docs/architecture-tests.md`](docs/architecture-tests.md).
 
 ## Step 7: Component + Malli
 
@@ -357,12 +398,14 @@ clojure -M:dev
 
 ```clojure
 (start!)                                   ; in-memory system, instant
-(run!* book/handle {:room-id "102" :guest {:name "Ada" :email "ada@example.com"}
-                    :check-in "2026-07-01" :check-out "2026-07-03"})
-(available/handle the-system)              ; => ["101" "103"]
-@(:sent (:email-sender the-system))        ; the confirmation "email"
-@(:published (:publisher the-system))      ; the integration event
-(reset)                                    ; reload changed code, restart
+(run!* api/book-room! {:room-id "102"
+                       :guest {:name "Ada" :email "ada@example.com"}
+                       :check-in "2026-07-01" :check-out "2026-07-03"})
+(api/available-rooms the-system)            ; => ["101" "103"]
+@(:sent (:guest-notifications the-system))  ; the confirmation "email"
+(system/flush! the-system)                  ; drain the outbox to the broker
+@(:published (:publisher the-system))       ; the integration event
+(reset)                                     ; reload changed code, restart
 ```
 
 The pure core needs no system at all — call `decider/decide` with a vector

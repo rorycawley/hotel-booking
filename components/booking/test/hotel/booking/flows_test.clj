@@ -26,6 +26,9 @@
     (is (:events (run!* api/book-room! sys ada-books-102)))
     (is (= ["101" "103"] (api/available-rooms sys))           "room is taken")
     (is (= 1 (count @(:sent (:guest-notifications sys))))         "guest got email")
+    ;; world is told via the OUTBOX relay - drain synchronously, then
+    ;; assert. (In prod the relay drains in the background.)
+    (system/flush! sys)
     (is (= 1 (count @(:published (:publisher sys))))       "world was told")))
 
 (deftest a-rejected-booking-has-no-side-effects
@@ -33,6 +36,7 @@
     (run!* api/book-room! sys ada-books-102)
     (is (:error (run!* api/book-room! sys ada-books-102)))
     (is (= 1 (count @(:sent (:guest-notifications sys))))   "no second email")
+    (system/flush! sys)
     (is (= 1 (count @(:published (:publisher sys)))) "no second announcement")))
 
 (deftest cancelling-frees-the-room-for-the-next-guest

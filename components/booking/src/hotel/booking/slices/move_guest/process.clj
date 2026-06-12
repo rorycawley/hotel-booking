@@ -18,7 +18,16 @@
         :compensating ──Compensated (new room re-cancelled)──► :failed (terminal)
 
    react (pure, below): PM event -> the NEXT domain command, as data,
-   with :on-success/:on-failure continuations pointing back at the PM."
+   with :on-success/:on-failure continuations pointing back at the PM.
+
+   Crash recovery: a sweeper in the system brick (PmSweeper component)
+   periodically calls `hotel.booking.interface/recover-move-guest-processes!`,
+   which finds non-terminal PM streams whose last event is older than
+   the threshold, re-runs `react` on that last event, and re-dispatches
+   the resulting effects. Re-fires are safe because dispatched commands
+   derive their `:command/id` deterministically from the source event
+   (see hotel.booking.effects/derive-command-id) - any work that already
+   committed returns the cached result via the processed_commands index."
   (:require [hotel.booking.room.events :as room-events]))
 
 ;; ---------- the 7 elements ----------

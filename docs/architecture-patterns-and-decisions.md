@@ -2,7 +2,7 @@
 
 A teaching guide to *why this system is shaped the way it is*. It's a hotel-booking
 service, but the interesting part is the set of choices underneath it: event sourcing, the
-Decider pattern, hexagonal structure, a Polylith monolith, and four recorded decisions
+Decider pattern, hexagonal structure, a Polylith monolith, and eight recorded decisions
 (the ADRs).
 
 **How to read it.** It's an arc, each part builds on the last:
@@ -55,30 +55,41 @@ state, and — crucially here — a single authoritative *order* of events (see 
 Part 4). The cost: you compute state by folding instead of reading it directly, and you
 think in terms of append-only logs.
 
-**In the code.** The store is append-only with two ordering guarantees:
+**In the code.** The store is append-only. Reading is by stream
+(version-ordered) or globally (`global_position`-ordered); writing is
+through one atomic operation that takes events + outbox messages +
+the processed-command cache row together:
 
 ```clojure
 ;; event_store/protocol.clj — the port
 (defprotocol EventStore
   (read-stream    [this stream-id] "All events for one stream, in order.")
-  (append-events! [this stream-id expected-version events]
-    "Append with optimistic concurrency: throws if the stream
-     no longer has exactly `expected-version` events.")
-  (read-all       [this] "All events in global order (feeds read models)."))
+  (read-all       [this]           "All events in global order (feeds read models).")
+  (transactional-append! [this op]
+    "ATOMIC: events + outbox messages + processed_commands in ONE TX.
+     Throws :concurrency-conflict if the stream's version moved."))
 ```
 
 ```sql
--- event_store/resources/event-store/schema.sql
-create table if not exists events (
+-- migrations/V1__initial.sql (excerpt)
+create table events (
   global_position bigserial primary key,   -- the global order
   stream_id       text    not null,
   version         bigint  not null,
+  event_id        uuid    unique,
+  correlation_id  uuid    not null,
+  causation_id    uuid,
+  actor_id        text,                    -- V4: audit-by-author
+  payload_v       int     not null default 1,
   payload         jsonb   not null,
   unique (stream_id, version));            -- optimistic concurrency
 ```
 
 **The rule it buys you.** State is always a fold over history; the log is never edited,
-only appended. `UNIQUE (stream_id, version)` gives you concurrency safety for free.
+only appended. `UNIQUE (stream_id, version)` gives you concurrency
+safety. The same TX boundary turns the outbox + idempotency cache
+into journal-strength guarantees — see `docs/fault-tolerance.md` for
+the full account.
 
 ## 2.2 The Decider — a pure decision machine
 
@@ -193,21 +204,30 @@ one place. The cost is an extra indirection (an effect map plus an interpreter).
       :check-in (:check-in event) :check-out (:check-out event)}]))
 ```
 
-Note what's *absent*: no email address plumbing, no subject line, no body. The interpreter
-turns the data into a port call:
+Note what's *absent*: no email address plumbing, no subject line, no
+body. The pure `partition-reactor-output` step splits reactor output
+into two buckets — `:publish` effects become outbox messages written
+in the SAME Postgres transaction as the events; everything else
+(`:notify-booking-confirmed`, `:dispatch-command`) is interpreted
+AFTER the commit:
 
 ```clojure
-;; effects.clj
-(defn execute! [{:keys [guest-notifications publisher command-handlers] :as system} effect]
+;; effects.clj — the post-commit interpreter
+(defn execute! [{:keys [guest-notifications command-handlers] :as system} effect]
   (case (:effect/type effect)
     :notify-booking-confirmed
     (notify/confirm-booking! guest-notifications (select-keys effect [:guest :room-id ...]))
-    :publish   ...
     :dispatch-command ...))   ; <- this branch is how processes work (§3.3)
+;; :publish is intentionally NOT a case here - publishes flow through
+;; the transactional outbox to the broker.
 ```
 
-**The rule it buys you.** The pipeline is **decide (pure) → evolve (pure) → react (pure) →
-effects at the edge**. Only `effects.clj` and `decider/handle` ever touch a port.
+**The rule it buys you.** The pipeline is **decide (pure) → evolve
+(pure) → react (pure) → publish → outbox (transactional) → post-commit
+effects at the edge**. The allow-listed seams that touch ports are
+`effects.clj`, `decider.clj`, `recovery.clj`, `pii.clj`,
+`slices/*/query.clj`, and `slices/documents/handler.clj` — checked by
+`arch_test.clj`.
 
 ---
 
@@ -223,13 +243,17 @@ not by technical layer. Each slice is a folder:
 
 ```
 slices/
-  book_room/         decide.clj  handler.clj      (rung 3 — a real invariant)
-  cancel_booking/    decide.clj  handler.clj
-  decommission_room/ decide.clj  handler.clj
-  available_rooms/   projection.clj  query.clj    (rung 1 — just a view)
-  send_confirmation/ react.clj                    (rung 2 — a pure reactor)
-  announce_booking/  react.clj
-  move_guest/        process.clj handler.clj      (rung 4 — a process manager)
+  book_room/             decide.clj  handler.clj      (rung 3 — a real invariant)
+  cancel_booking/        decide.clj  handler.clj
+  decommission_room/     decide.clj  handler.clj
+  approve_decommission/  decide.clj  handler.clj      (rung 4 — multi-party
+                                                      approval PM, ADR-0007-adj.)
+  available_rooms/       projection.clj  query.clj    (rung 1 — just a view)
+  send_confirmation/     react.clj                    (rung 2 — a pure reactor)
+  announce_booking/      react.clj
+  move_guest/            process.clj handler.clj      (rung 4 — a process manager)
+  documents/             decide.clj  handler.clj      (rung 3 — supporting docs;
+                                                      crypto-shred-able blobs)
 ```
 
 **Why (the tradeoff).** Adding a use case should touch *one* slice folder plus two
@@ -344,24 +368,36 @@ distributed-systems tax today, but the extraction path stays open (brick → its
 service later). The cost is tool commitment and one more concept ("brick") in the
 vocabulary (ADR-0004).
 
-**In the code.** Bricks map onto the hexagon: the `booking` component's interface *is* the
-driving port; each driven port (`event-store`, `integration`, `notifications`, `clock`) is
-a component whose interface *is* the port and whose impl namespaces *are* the adapters; the
-`system` component is the configurator. Wiring is **dependency injection via Component**:
+**In the code.** Bricks map onto the hexagon: the `booking`
+component's interface *is* the driving port; each driven port
+(`event-store`, `integration`, `notifications`, `clock`, `problems`,
+`subject-keys`, `document-store`, `ids`) is a component whose
+interface *is* the port and whose impl namespaces *are* the adapters;
+plus two infrastructure bricks (`outbox-relay`, the projector/sweeper
+Components inside `event-store` and `system`). The `system` component
+is the configurator. Wiring is **dependency injection via Component**:
 
 ```clojure
 ;; system/core.clj — the CONFIGURATOR, the only brick that sees every interface
 (defn in-memory-system []                       ; tests + REPL
   (component/system-map
-   :event-store (event-store/in-memory)
-   :publisher   (integration/in-memory)
-   :clock       (clock/deterministic) ...))
+   :event-store    (event-store/in-memory)
+   :publisher      (integration/in-memory)
+   :clock          (clock/deterministic)
+   :ids            (ids/deterministic)
+   :subject-keys   (subject-keys/in-memory)
+   :document-store (document-store/in-memory)
+   ...))
 
 (defn prod-system [{:keys [jdbc-url rabbit-uri ...]}]   ; production
   (component/system-map
-   :event-store (event-store/postgres jdbc-url)
-   :publisher   (integration/rabbitmq {:uri rabbit-uri :exchange "booking"})
-   :clock       (clock/system-clock {:uncertainty-ms 5}) ...))
+   :event-store    (event-store/postgres jdbc-url)
+   :publisher      (integration/rabbitmq {:uri rabbit-uri :exchange "booking"})
+   :clock          (clock/system-clock {:uncertainty-ms 5
+                                        :uncertainty-fn ...})
+   :ids            (ids/random)
+   :document-store (document-store/minio {...})
+   ...))
 ```
 
 Adapters that own a connection implement `Lifecycle` (`start`/`stop`); in-memory ones need
@@ -386,10 +422,10 @@ the *lowest rung that holds its requirements* and climbs only when forced.
 | Rung | Shape | When | Example here |
 |---|---|---|---|
 | 0 | pure function | a calculation | `clock/overlapping?`, `room/fsm` |
-| 1 | projection + query | a view of events | `available_rooms` — no decider, no schema, no port |
+| 1 | projection + query | a view of events | `available_rooms` — pure `evolve` + a thin query shell over the RoomView port |
 | 2 | pure reactor | event → effect data | `send_confirmation`, `announce_booking` |
-| 3 | full decider slice | invariant + concurrency on a stream | `book_room`, `cancel_booking` |
-| 4 | process manager | cross-stream coordination | `move_guest` |
+| 3 | full decider slice | invariant + concurrency on a stream | `book_room`, `cancel_booking`, `documents` |
+| 4 | process manager | cross-stream coordination | `move_guest`, `approve_decommission` |
 
 **Why it matters.** This is the antidote to two failure modes: *over-machining* (a decider
 for a calculation) and *under-machining* (a bare function holding a real invariant). The
@@ -397,12 +433,15 @@ for a calculation) and *under-machining* (a bare function holding a real invaria
 with no schema or port, because it can't receive invalid input and holds no invariant:
 
 ```clojure
-;; slices/available_rooms/projection.clj — deliberately the lightest slice
-(defn project [view event]
+;; slices/available_rooms/projection.clj — pure evolve fn; the view
+;; itself lives in Postgres now, written by the projector Component.
+;; The view stores ONLY non-PII data so GDPR erasure of a subject does
+;; not have to trigger a view rebuild.
+(defn evolve [view event]
   (case (:event/type event)
-    :room-booked         (assoc view (:room-id event) :booked)
-    :booking-cancelled   (assoc view (:room-id event) :free)
-    :room-decommissioned (assoc view (:room-id event) :decommissioned)
+    :room-booked         (assoc view (:room-id event) {:status :booked})
+    :booking-cancelled   (assoc view (:room-id event) {:status :available})
+    :room-decommissioned (assoc view (:room-id event) {:status :decommissioned})
     view))
 ```
 
@@ -508,6 +547,47 @@ The contract is a closed Malli schema, and a test asserts an internal keyword le
 **The rule it buys you.** Publish only translated, closed, versioned contracts. Evolve them
 additively (v2 is a new schema, never a breaking edit).
 
+## 4.5 Encryption at rest + in transit (ADR-0005)
+
+What the application supports vs what infrastructure must do. The
+adapters pass through `sslmode=verify-full` (Postgres) and `amqps://`
+(RabbitMQ); production deployments configure these on the JDBC/AMQP
+URIs. At-rest encryption is the storage provider's job (RDS / GCP
+CMEK / LUKS); we name the smoke checks that prove a deployment is
+honestly encrypted before sign-off.
+
+## 4.6 GDPR Article 17 via crypto-shredding (ADR-0006)
+
+The pivot that reconciles event-sourcing with the right to erasure.
+**Events are immutable; keys are not.** PII fields and document blobs
+are encrypted with a subject-scoped AES-256-GCM key
+(`subject-keys` brick); erasing a subject destroys the key, and
+every historical row referencing that subject decrypts to the marker
+keyword `:erased`. The journal stays intact; the personal data
+becomes unreadable. Worked round-trip + erasure proof in
+`gdpr_erasure_test.clj`.
+
+## 4.7 The determinism boundary (ADR-0007)
+
+What IS deterministic (domain decisions, replay, PM re-fires,
+idempotent retries, sweeper recovery) vs what is NOT (race winner
+among concurrent commands, broker delivery order, encryption
+nonces, projection latency, ProblemSink wall-clock) — and why each
+exception is correct. Concentric circles: deterministic core →
+shell entropy controlled via ports (clock, ids) → operational entropy
+acceptable by design. Reviewers cite this ADR instead of re-deriving
+the boundary by grep.
+
+## 4.8 Attribute naming policy (ADR-0008)
+
+Hickey's *Effective Programs* move: namespace domain attributes
+globally so meaning lives in the attribute, not the container that
+carries it (`:person/name` + `:person/role :guest`, not `:guest
+{:name ...}`). Applies to NEW attributes from this point forward;
+existing unqualified names are not retrofitted unless a version bump
+gives a free ride. Sets the convention before the registry direction
+grows the attribute set tenfold.
+
 ---
 
 # Part 5 — Testing is an architectural decision
@@ -531,6 +611,7 @@ adapters held to **one shared contract test**.
     (is (:events (api/book-room! sys ada-books-102)))
     (is (= ["101" "103"] (api/available-rooms sys))         "room is taken")
     (is (= 1 (count @(:sent (:guest-notifications sys))))   "guest got email")
+    (system/flush! sys)                       ; drain outbox → publisher
     (is (= 1 (count @(:published (:publisher sys)))))))
 ```
 

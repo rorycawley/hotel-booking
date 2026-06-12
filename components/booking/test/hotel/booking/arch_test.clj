@@ -64,7 +64,11 @@
   #{"hotel.event-store.interface"
     "hotel.clock.interface"
     "hotel.notifications.interface"
-    "hotel.integration.interface"})
+    "hotel.integration.interface"
+    "hotel.problems.interface"
+    "hotel.subject-keys.interface"
+    "hotel.document-store.interface"
+    "hotel.ids.interface"})
 
 (def ^:private core-forbidden
   (into port-interfaces #{"clojure.java.io" "java.io" "java.net"}))
@@ -81,7 +85,7 @@
    #"\bSystem/nanoTime\b"
    #"\bMath/random\b"
    #"\((?:rand|rand-int|rand-nth)[\s)]"
-   #"\bhotel\.(?:event-store|clock|notifications|integration)\.interface/"])
+   #"\bhotel\.(?:event-store|clock|notifications|integration|problems|subject-keys|document-store|ids)\.interface/"])
 
 (defn- forbidden-calls [file]
   (let [src (slurp file)]
@@ -107,11 +111,18 @@
 ;; ---------------------------------------------------------------------------
 
 (def ^:private port-allowed-names
-  #{"effects.clj" "decider.clj"})
+  ;; effects.clj: post-commit effect interpreter
+  ;; decider.clj: the single impure shell of every state-changing slice
+  ;; recovery.clj: the shell for the PM-recovery sweep
+  ;; pii.clj:     the envelope-encrypt seam for PII fields
+  #{"effects.clj" "decider.clj" "recovery.clj" "pii.clj"})
 
 (defn- port-allowed? [path]
   (or (port-allowed-names (.getName (io/file path)))
-      (re-find #"^slices/[^/]+/query\.clj$" path)))
+      (re-find #"^slices/[^/]+/query\.clj$" path)
+      ;; documents/handler.clj is a shell for blob storage + envelope
+      ;; encryption - same allow-list rationale as decider.clj.
+      (= "slices/documents/handler.clj" path)))
 
 (deftest only-seams-touch-ports
   (testing "only effects.clj, decider.clj, and slices/*/query.clj may import a port"

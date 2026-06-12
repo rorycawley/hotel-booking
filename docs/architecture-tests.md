@@ -68,7 +68,9 @@ room/events.clj
 
 **Import scan.** May not `:require`: `hotel.event-store.interface`,
 `hotel.clock.interface`, `hotel.notifications.interface`,
-`hotel.integration.interface`, `clojure.java.io`, `java.io`, `java.net`.
+`hotel.integration.interface`, `hotel.problems.interface`,
+`hotel.subject-keys.interface`, `hotel.document-store.interface`,
+`clojure.java.io`, `java.io`, `java.net`.
 
 **Inline-call scan.** File body may not contain:
 
@@ -76,7 +78,7 @@ room/events.clj
   `ZonedDateTime/now`, `System/currentTimeMillis`, `System/nanoTime`.
 - Randomness: `Math/random`, `(rand …)`, `(rand-int …)`, `(rand-nth …)`.
 - FQN port calls: anything matching
-  `hotel.(event-store|clock|notifications|integration).interface/…`.
+  `hotel.(event-store|clock|notifications|integration|problems|subject-keys|document-store).interface/…`.
 
 The body scan exists because FQN calls and `clojure.core` randomness
 need no `:require` — the import scan can't see them. The FQN port
@@ -91,13 +93,16 @@ or projection — whether by import, by Java static, or by FQN.
 Any file that `:require`s a `hotel.<port>.interface` must be one of:
 
 ```
-effects.clj            -- interprets effects from reactors
-decider.clj            -- the generic decider runner (handle)
-slices/*/query.clj     -- read-side projection runner
+effects.clj                          -- interprets post-commit effects
+decider.clj                          -- the generic decider runner (handle)
+recovery.clj                         -- the PM-recovery sweep shell
+pii.clj                              -- envelope-encrypt seam for PII fields
+slices/*/query.clj                   -- read-side projection runner
+slices/documents/handler.clj         -- envelope-encrypt seam for blobs
 ```
 
-Catches: a new slice growing a "convenience" port import outside the
-two write-side seams and the one read-side seam.
+Catches: a new slice growing a "convenience" port import outside one
+of the documented seams.
 
 ### 3. The contract gate stays wired (`effects-gate-stays-wired`)
 
@@ -122,7 +127,7 @@ clojure -X:dev:test                  # the fast suite, includes arch tests
 clojure -X:dev:test :vars '[hotel.booking.arch-test/core-stays-pure]'
 ```
 
-Three deftests, ~23 assertions on the current tree (one per file that
+Three deftests, ~30 assertions on the current tree (one per file that
 matches each scan, plus two for the contract gate). A failure prints
 the offending file and what was found — the forbidden `:require`, the
 forbidden inline call, or the missing gate function.

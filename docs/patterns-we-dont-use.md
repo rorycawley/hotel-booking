@@ -60,10 +60,11 @@ processing so a slow consumer doesn't block the producer.
 
 **Why we don't need it intra-process.**
 
-- We already have intra-process pub/sub, just unnamed. When an event
-  is appended, `effects/react-all!` fans it out to every reactor
-  registered in `app/reactors`. Reactors don't know about each other,
-  multiple can subscribe to the same event, and each returns effect
+- We already have intra-process pub/sub, just unnamed. When events
+  are produced, `effects/partition-reactor-output` runs every reactor
+  over every event; `effects/execute-effects!` interprets the
+  non-publish results post-commit. Reactors don't know about each
+  other, multiple can subscribe to the same event, each returns effect
   data. That *is* pub/sub — expressed as a list of functions plus a
   runner, rather than an explicit "bus" abstraction.
 - The two things a named bus would add are not wins here:
@@ -71,11 +72,13 @@ processing so a slow consumer doesn't block the producer.
     `(when (= :room-booked (:event/type event)) …)` with a registration
     hook saves zero meaningful lines and obscures what the reactor
     actually reacts to.
-  - **Async queuing** would actively hurt us. Effects run
-    synchronously so failures surface on `:effect-errors` to the
-    caller, which is what the "one use case = one command = one
-    stream append" rule in CLAUDE.md relies on. Making effects async
-    loses that error surface.
+  - **Async queuing** for the *post-commit* effects (notify,
+    dispatch-command) would actively hurt: failures surface on
+    `:effect-errors` to the caller AND to the `ProblemSink`. Making
+    them async would lose that error surface. Publish effects ARE
+    asynchronous — they go through the outbox + relay — because
+    durability is the property that justifies async there, not
+    decoupling.
 
 **Where an actual bus *does* live, and why.**
 `hotel.integration.interface` with its in-memory and RabbitMQ adapters
@@ -88,9 +91,11 @@ speculative machinery — direct function dispatch through
 `hotel.booking.interface` is already decoupled enough.
 
 The substantive concern around publish reliability — what if the
-integration bus is unreachable when we try to publish? — is captured
-in `docs/backlog.md` (the outbox entry). That's the real problem worth
-solving; a generic in-memory bus is not.
+integration bus is unreachable when we try to publish? — has been
+solved by the transactional outbox + relay (see
+[`docs/fault-tolerance.md`](fault-tolerance.md), §4 *The publish
+path*). That was the real problem worth solving; a generic in-memory
+bus was not.
 
 ## See also
 

@@ -179,13 +179,13 @@ Used when two functions call each other (mutual recursion) and one is defined be
 
 ```clojure
 ;; effects.clj
-(declare react-all!)
-;; ... execute! calls react-all! ...
-;; ... react-all! is defined further down
+(declare execute-effects!)
+;; ... execute! calls execute-effects! ...
+;; ... execute-effects! is defined further down
 ```
 
-Without `declare`, the compiler would complain that `react-all!` is unknown when it first
-sees it inside `execute!`.
+Without `declare`, the compiler would complain that `execute-effects!`
+is unknown when it first sees it inside `execute!`.
 
 ## `defonce` — define once, don't clobber on reload
 
@@ -457,7 +457,7 @@ Binds `success` to `(:on-success effect)`; runs the body only if that wasn't `ni
 
 ```clojure
 ;; interface.clj
-(if-let [effect-result (effects/react-all! system (:events result))]
+(if-let [effect-result (effects/execute-effects! system (:other-effects result))]
   (assoc result :effect-errors (:errors effect-result))
   result)
 ```
@@ -845,14 +845,14 @@ This is how the codebase defines **ports** (protocols) and **adapters** (records
 ## `defprotocol` — declare an interface
 
 ```clojure
-;; event_store/protocol.clj
+;; event_store/protocol.clj  (excerpt; the real protocol has more methods)
 (defprotocol EventStore
-  (read-stream    [this stream-id]
+  (read-stream            [this stream-id]
     "All events for one stream, in order.")
-  (append-events! [this stream-id expected-version events]
-    "Append with optimistic concurrency: ...")
-  (read-all       [this]
-    "All events in global order ..."))
+  (read-all               [this]
+    "All events in global order (feeds read models / automations).")
+  (transactional-append!  [this op]
+    "ATOMIC: events + outbox messages + processed_commands in ONE TX."))
 ```
 
 Each line is a method signature: name, params (first is the instance, `this`), optional

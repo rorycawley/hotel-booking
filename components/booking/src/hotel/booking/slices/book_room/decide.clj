@@ -11,7 +11,12 @@
    [:room-id   :string]
    [:guest     events/Guest]
    [:check-in  :string]
-   [:check-out :string]])
+   [:check-out :string]
+   ;; supporting documents (passport scan, signed declaration, ...). Each
+   ;; entry is a previously-uploaded document-id; the resulting event
+   ;; records the IDs so the booking always has an auditable evidence
+   ;; trail back to the bytes.
+   [:supporting-document-ids {:optional true} [:vector :string]]])
 
 (def decider
   {:command-schema command-schema
@@ -22,8 +27,11 @@
    (fn [state command]
      (case (:status state)
        :booked    {:error :room-already-booked}
-       :available {:events [{:event/type :room-booked
-                             :room-id    (:room-id command)
-                             :guest      (:guest command)
-                             :check-in   (:check-in command)
-                             :check-out  (:check-out command)}]}))})
+       :available {:events [(cond-> {:event/type :room-booked
+                                     :room-id    (:room-id command)
+                                     :guest      (:guest command)
+                                     :check-in   (:check-in command)
+                                     :check-out  (:check-out command)}
+                              (seq (:supporting-document-ids command))
+                              (assoc :supporting-document-ids
+                                     (:supporting-document-ids command)))]}))})

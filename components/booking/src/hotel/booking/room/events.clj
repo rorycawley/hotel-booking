@@ -23,6 +23,7 @@
      [:guest      Guest]
      [:check-in   :string]
      [:check-out  :string]
+     [:supporting-document-ids {:optional true} [:vector :string]]
      [:recorded-at {:optional true} Interval]]]
    [:booking-cancelled
     [:map

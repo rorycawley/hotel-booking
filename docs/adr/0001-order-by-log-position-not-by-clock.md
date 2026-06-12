@@ -75,8 +75,9 @@ Concretely:
 - The invariant is technology-independent: `UNIQUE (stream_id, version)` +
   a global sequence are 35-year-old relational primitives; the rule
   survives any future storage migration.
-- Testable today: `test/booking/ordering_test.clj` proves two events with
-  overlapping clock intervals are undecidable by time yet totally ordered
+- Testable today: `components/booking/test/hotel/booking/ordering_test.clj`
+  proves two events with overlapping clock intervals are undecidable by
+  time yet totally ordered
   by the log.
 - Clock infrastructure becomes an evidence-quality decision, not a
   correctness decision: NTP-class is acceptable; buy PTP only to make the
@@ -156,14 +157,16 @@ faces money, regulators, or courts converges on.
 ## Implementation in this codebase
 
 - Order: `events.global_position` (global) and `UNIQUE (stream_id, version)`
-  (per scope) - `resources/schema.sql`, both event-store adapters, one
-  shared contract test.
-- Evidence: `booking/ports/driven/clock.clj` (interval-shaped port with
-  `definitely-before?` / `overlapping?` algebra), stamping in
-  `booking/decider.clj`, adapters `deterministic` (test) and `system`
-  (prod, static bound - production should read the live bound from
+  (per scope) -
+  `components/event-store/resources/event-store/migrations/V1__initial.sql`,
+  both event-store adapters, one shared contract test.
+- Evidence: `components/clock/src/hotel/clock/` (interval-shaped port
+  with `definitely-before?` / `overlapping?` algebra), stamping in
+  `components/booking/src/hotel/booking/decider.clj`, adapters
+  `deterministic` (test) and `system-clock` (prod, optional
+  `:uncertainty-fn` to read the live bound from
   chrony/PTP/ClockBound).
-- Proof: `test/booking/ordering_test.clj`.
+- Proof: `components/booking/test/hotel/booking/ordering_test.clj`.
 - Not yet built, tracked here: hash-chaining + external anchoring
   (Decision 5); receipt-gate event (Decision 6) if the legal definition
   requires it.

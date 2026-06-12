@@ -1,5 +1,11 @@
 name: CI
 
+env:
+  CLOJURE_CLI_VERSION: "1.11.3.1463"
+  POSTGRES_IMAGE: "postgres:16.4-alpine"
+  RABBITMQ_IMAGE: "rabbitmq:3.13.7-management-alpine"
+  MINIO_IMAGE: "minio/minio:RELEASE.2024-08-17T01-24-54Z"
+
 on:
   pull_request:
   push:
@@ -11,9 +17,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: Test and Build
-    runs-on: ubuntu-latest
+  verify:
+    name: Verify and Build
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out repository
@@ -35,9 +41,10 @@ jobs:
 
       - name: Install Clojure CLI
         run: |
-          curl -L -O https://github.com/clojure/brew-install/releases/latest/download/linux-install.sh
-          chmod +x linux-install.sh
-          sudo ./linux-install.sh
+          curl -fsSLo "linux-install-${CLOJURE_CLI_VERSION}.sh" \
+            "https://download.clojure.org/install/linux-install-${CLOJURE_CLI_VERSION}.sh"
+          chmod +x "linux-install-${CLOJURE_CLI_VERSION}.sh"
+          sudo "./linux-install-${CLOJURE_CLI_VERSION}.sh"
 
       - name: Add ~/.local/bin to PATH
         run: |
@@ -86,3 +93,48 @@ jobs:
       - name: Build deployable jar
         working-directory: projects/hotel-system
         run: clojure -T:build uber
+
+  integration:
+    name: Integration tests (Postgres + RabbitMQ + MinIO)
+    runs-on: ubuntu-24.04
+    # Runs in PARALLEL with `verify` so PR feedback time = max(fast, integration).
+    # ubuntu-24.04 already has Docker available; Testcontainers boots its own
+    # Postgres + RabbitMQ + MinIO - no GHA service containers needed (we'd lose the
+    # `verify-contract` shared-spec property if we hard-coded a fixed setup).
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Cache Maven dependencies
+        uses: actions/cache@v5
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/deps.edn') }}
+          restore-keys: |
+            ${{ runner.os }}-m2-
+
+      - name: Install Clojure CLI
+        run: |
+          curl -fsSLo "linux-install-${CLOJURE_CLI_VERSION}.sh" \
+            "https://download.clojure.org/install/linux-install-${CLOJURE_CLI_VERSION}.sh"
+          chmod +x "linux-install-${CLOJURE_CLI_VERSION}.sh"
+          sudo "./linux-install-${CLOJURE_CLI_VERSION}.sh"
+
+      # Pre-pull the container images in parallel so first-run latency
+      # doesn't push Testcontainers wait-strategies near their timeouts.
+      - name: Pre-pull container images
+        run: |
+          docker pull "$POSTGRES_IMAGE" &
+          docker pull "$RABBITMQ_IMAGE" &
+          docker pull "$MINIO_IMAGE" &
+          wait
+
+      - name: Run integration tests
+        run: clojure -X:dev:test :excludes '[]'

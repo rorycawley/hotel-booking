@@ -4,4 +4,12 @@
  {;; Polylith interface stubs destructure config keys for API
   ;; documentation but pass `:as config` straight through to impls.
   ;; The keys aren't unused — they're the contract.
-  :unused-binding {:exclude-destructured-keys-in-fn-args true}}}
+  :unused-binding {:exclude-destructured-keys-in-fn-args true}}
+
+ ;; test.check's `defspec` defines a var like `def`. Without this hint,
+ ;; clj-kondo flags every defspec name as "unresolved symbol" the moment
+ ;; another property references it (and treats the body's syntax as
+ ;; opaque). Aliasing to clojure.core/def teaches kondo the var-defining
+ ;; shape.
+ :lint-as
+ {clojure.test.check.clojure-test/defspec clojure.core/def}}

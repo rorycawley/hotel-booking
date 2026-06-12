@@ -4,4 +4,5 @@
             [hotel.booking.slices.book-room.decide :as core]))
 
 (defn handle [system {:keys [room-id] :as command}]
-  (decider/handle core/decider system (str "room-" room-id) command))
+  (decider/handle core/decider system (str "room-" room-id)
+                  (assoc command :command/type :book-room)))

@@ -1,0 +1,4 @@
+{:paths ["src" "resources"]
+ :deps  {hotel/event-store   {:local/root "../event-store"}
+         hotel/integration   {:local/root "../integration"}
+         com.stuartsierra/component {:mvn/version "1.1.0"}}}

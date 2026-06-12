@@ -4,6 +4,11 @@
         hotel/integration   {:local/root "../../components/integration"}
         hotel/notifications {:local/root "../../components/notifications"}
         hotel/clock         {:local/root "../../components/clock"}
+        hotel/ids           {:local/root "../../components/ids"}
+        hotel/document-store {:local/root "../../components/document-store"}
+        hotel/outbox-relay  {:local/root "../../components/outbox-relay"}
+        hotel/problems      {:local/root "../../components/problems"}
+        hotel/subject-keys  {:local/root "../../components/subject-keys"}
         hotel/system        {:local/root "../../components/system"}
         hotel/rest-api      {:local/root "../../bases/rest-api"}}
  :aliases

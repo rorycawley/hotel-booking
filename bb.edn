@@ -27,11 +27,8 @@
    :task (shell "clojure -X:dev:test")}
 
   test:all
-  {:doc "Full suite incl. Postgres contract test ($DATABASE_URL or localhost/booking)."
-   :task (let [db (or (System/getenv "DATABASE_URL")
-                      "jdbc:postgresql://localhost/booking")]
-           (shell {:extra-env {"DATABASE_URL" db}}
-                  "clojure" "-X:dev:test" ":excludes" "[]"))}
+  {:doc "Full suite incl. Postgres + RabbitMQ integration tests (needs Docker - Testcontainers boots containers automatically)."
+   :task (shell "clojure" "-X:dev:test" ":excludes" "[]")}
 
   test:inc
   {:doc "Polylith change-aware incremental tests."

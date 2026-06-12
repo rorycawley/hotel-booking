@@ -2,44 +2,27 @@
 
 Architectural ideas with real value that we haven't acted on yet. Each
 entry names the problem, sketches the shape, and lists the trigger
-that would justify the work. Strike through or delete as items land.
+that would justify the work. Done items kept in the "Shipped" section
+below with a pointer at where they landed, so future readers don't
+re-discover problems already solved.
 
-## Outbox for integration events
+---
 
-**Problem.** `effects.clj` appends domain events first, then runs the
-`:publish` effect as a separate side step. If the publish fails (queue
-down, network blip, broker restart), the domain events are committed
-but the integration event is lost. The current code records the
-failure on `:effect-errors` but the inconsistency stays — there's no
-replay path, and consumers can never recover the missed event.
-
-**Shape.** Write the integration event payload into an `outbox` table
-inside the *same* Postgres transaction as `append-events!`. A separate
-worker drains the outbox to RabbitMQ at-least-once and deletes rows on
-success. The in-memory event-store gets the same shape with an atomic
-`conj` onto an outbox atom for the test adapter. The `:publish` effect
-disappears from the active effect set; reactors that today emit
-`:publish` instead enqueue into the outbox at append time.
-
-**Trigger.** When at least one real external consumer subscribes to
-the integration topics. Today the only subscribers are the recording
-test adapter and the in-memory broker, so losing a publish doesn't
-matter — there's nothing on the other end to miss it.
-
-**Code anchors.** `components/event-store/src/hotel/event_store/postgres.clj`,
-`components/booking/src/hotel/booking/effects.clj`,
-`components/integration/`.
-
-## Authorization
+## Open — Authorization
 
 **Problem.** REST endpoints accept any caller. There's no auth at all
-— anyone reaching `bases/rest-api` can issue any command.
+— anyone reaching `bases/rest-api` can issue any command. The
+`:actor-id` field is already plumbed through every event end-to-end
+(see ADR-0007), but the REST layer reads it from the `X-Actor-Id`
+header without verification. The seam is ready; the gate isn't.
 
 **Shape.** Two layers, deliberately split:
 
-- **Enforcement** lives in `bases/rest-api`: token validation, the
-  policy-evaluation mechanism, the check at the request boundary.
-  Knows *nothing* about specific permissions.
+- **Enforcement** lives in `bases/rest-api`: token validation
+  (OAuth2/OIDC against a JWKS endpoint), the policy-evaluation
+  mechanism, the check at the request boundary. Knows *nothing* about
+  specific permissions. Sets `:actor-id` from the verified `sub`
+  claim, not from a client-supplied header.
 - **Meaning** lives in each slice: a permission keyword (e.g.
   `:booking/book-room`, `:booking/decommission-room`) declared
   privately next to the handler. The slice checks for its own
@@ -58,52 +41,49 @@ crept in is much harder than getting the shape right on day one.
 **Code anchors.** `bases/rest-api/.../routes.clj`,
 `components/booking/src/hotel/booking/slices/*/handler.clj`.
 
-## Idempotency key on integration contracts
+---
 
-**Problem.** Contract payloads in `hotel.booking.contracts` carry
-`:type`, `:version`, and domain fields, but no stable message
-identifier. A retried publish — from the future outbox worker above,
-from a RabbitMQ redelivery, or from a consumer re-reading the queue
-— gives downstream code no way to dedup. They'd act on the same
-logical event twice.
+## Shipped
 
-**Shape.** Add `:message-id` to each contract schema. Derive it
-deterministically from the source domain event so it's stable across
-retries — the natural source is the event's stream-id plus the event
-store's global position (both already exist; the position would need
-to surface into the event the reactor sees). Stamp at the same place
-`effects.clj` already calls `contracts/valid?`. The reactor stays
-pure.
+These were on the backlog and have since landed. Kept here as a
+ledger so future contributors can verify the trigger fired and the
+shape that earned the change.
 
-**Trigger.** Before the first real external consumer ships. Once a
-contract is "out in the world", adding a required field is a version
-bump (`room-booked-v2`), which is significantly more work than getting
-it on `v1` now.
+### Outbox for integration events — **shipped**
 
-**Code anchors.** `components/booking/src/hotel/booking/contracts.clj`,
-`components/booking/src/hotel/booking/effects.clj`.
+What landed: `outbox` table written in the same Postgres transaction
+as `events` (V1 migration), atomic UPDATE-RETURNING claim with
+`claimed_at` + 10-minute stale reclaim (V3), exponential backoff +
+dead-letter after `max_attempts` (V2). Background worker in the
+`outbox-relay` brick drains it with publisher confirms + a
+basic.return listener. Headline integration test
+(`outbox-relay/test/.../integration_test.clj`) kills RabbitMQ,
+writes a booking, restarts the broker, drains the relay, asserts the
+message lands — proves the durability claim.
 
-## Maintained read models for queries
+Full account: [`docs/fault-tolerance.md`](fault-tolerance.md).
 
-**Problem.** `available-rooms/query.clj` calls `(es/read-all event-store)`
-and folds every event through the projection on every query. Correct
-and pure, but linear in the total event count — as the log grows,
-every read gets slower. The same will be true of any future query
-slice that needs to fold over the full log.
+### Maintained read models for queries — **shipped**
 
-**Shape.** Introduce a maintained read-model store. A subscriber
-listens to event-store appends and updates a denormalized table (e.g.
-`available_rooms_view`); the query reads directly from that table.
-Eventual consistency between log and read model is the trade. The pure
-projection isn't deleted — it becomes the rebuild routine, used to
-populate the view from scratch or after a read-model schema change.
-This is also the prerequisite for any later read-replica deployment
-(separate read DB), if that's ever wanted.
+What landed: `room_view` table plus `projection_checkpoints`; the
+`event-store/projector.clj` Component drains events past the
+checkpoint in the background, the query layer does one bounded
+sync-catch-up batch then reads the table. Projection lag past a
+threshold is recorded to `ProblemSink` so staleness is observable,
+not silent. The pure projection fn
+(`available_rooms/projection.clj`) doubles as the rebuild routine —
+drop the view, restart, it recomputes from the journal.
 
-**Trigger.** When `available-rooms` (or any other replay-based query)
-crosses an acceptable latency threshold under realistic event volume.
-Today the volumes don't warrant it; the current shape is correct, just
-not scalable indefinitely.
+### Idempotency key on integration contracts — **shipped (different shape)**
 
-**Code anchors.** `components/booking/src/hotel/booking/slices/available_rooms/`,
-`components/event-store/`.
+Did not add `:message-id` to the contract payload directly; instead,
+outbox rows carry a `message_id` UUID that the RabbitMQ adapter sets
+as the AMQP `message-id` header on publish. Consumers dedupe by that
+header (the inbox pattern). The contract payload stays minimal — fewer
+required fields downstream, same dedup property at the broker layer.
+The inbox pattern itself is in `event-store/protocol.clj`
+(`record-inbound!` / `handle-inbound!`) and tested in `contract.clj`.
+
+If a future requirement says a downstream system insists on the
+message-id INSIDE the payload (not the header), that's a contract v2
+bump — additive only, follows the ADR-0004 contract policy.

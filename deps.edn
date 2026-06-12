@@ -7,20 +7,46 @@
                        hotel/integration   {:local/root "components/integration"}
                        hotel/notifications {:local/root "components/notifications"}
                        hotel/clock         {:local/root "components/clock"}
+                       hotel/ids           {:local/root "components/ids"}
+                       hotel/document-store {:local/root "components/document-store"}
+                       hotel/outbox-relay  {:local/root "components/outbox-relay"}
+                       hotel/problems      {:local/root "components/problems"}
+                       hotel/subject-keys  {:local/root "components/subject-keys"}
                        hotel/system        {:local/root "components/system"}
                        hotel/rest-api      {:local/root "bases/rest-api"}
                        org.clojure/tools.namespace {:mvn/version "1.5.0"}}}
 
   ;; clojure -X:dev:test            -> fast suite (pure + in-memory, no I/O)
-  ;; clojure -X:dev:test :excludes '[]'  -> incl. ^:integration (needs DATABASE_URL)
+  ;; clojure -X:dev:test :excludes '[]'  -> incl. ^:integration (spins up
+  ;;                                       Postgres + RabbitMQ via Testcontainers
+  ;;                                       - needs a running Docker daemon)
   :test {:extra-paths ["components/booking/test"
+                       "components/clock/test"
+                       "components/ids/test"
                        "components/event-store/test"
+                       "components/outbox-relay/test"
+                       "components/integration/test"
+                       "components/problems/test"
+                       "components/subject-keys/test"
+                       "components/document-store/test"
                        "bases/rest-api/test"]
          :extra-deps  {io.github.cognitect-labs/test-runner
-                       {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
+                       {:git/tag "v0.5.1" :git/sha "dfb30dd"}
+                       org.clojure/test.check        {:mvn/version "1.1.1"}
+                       org.testcontainers/postgresql {:mvn/version "1.20.4"}
+                       org.testcontainers/rabbitmq   {:mvn/version "1.20.4"}
+                       org.testcontainers/minio      {:mvn/version "1.20.4"}
+                       org.slf4j/slf4j-nop           {:mvn/version "2.0.13"}}
          :exec-fn     cognitect.test-runner.api/test
          :exec-args   {:dirs ["components/booking/test"
+                              "components/clock/test"
+                              "components/ids/test"
                               "components/event-store/test"
+                              "components/outbox-relay/test"
+                              "components/integration/test"
+                              "components/problems/test"
+                              "components/subject-keys/test"
+                              "components/document-store/test"
                               "bases/rest-api/test"]
                        :excludes [:integration]}}
 
