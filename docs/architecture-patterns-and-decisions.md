@@ -37,6 +37,47 @@ The reasoning, in one line each:
 
 Keep this in mind; every later decision is an application of it.
 
+## A second lens — Transform / Move / Route / Remember
+
+That first question — *where should change be contained?* — decides the
+**vertical** decomposition: bricks and slices, one folder per
+capability. Rich Hickey's *Language of the System* (2012) names a
+second, orthogonal question that decides what each seam is *doing*:
+
+> A factory isn't "workers mutate factory state, go home." It's raw
+> materials in → transformations → cars out. Flow orientation, not
+> place orientation.
+
+He identifies four jobs and warns that a single component doing more
+than one becomes un-reasonable-about (*"memcache is great because it
+does one thing"*):
+
+| Job | What it does | Where it lives here |
+|---|---|---|
+| **Transform** | pure value → value | `decide` / `evolve` / `react` / projections — CLAUDE.md invariant #2 (no I/O, no clock, no randomness) |
+| **Move** | a queue, nothing else | `hotel.integration.interface` (RabbitMQ in prod, in-memory in tests) |
+| **Route** | translate + address | `hotel.booking.contracts` + the `announce-*` reactors — domain event in, versioned external contract out |
+| **Remember** | epochal storage of facts | `hotel.event-store` — append-only, ordered by `global_position` (ADR-0001) |
+
+Why the lens earns its keep:
+
+- **It names *why* the core is pure.** "Why can't `decide` read the
+  clock?" — because `decide` is a Transform, and a Transform that
+  reads a clock is silently also a Remember (of *when* it ran). The
+  four-jobs separation is the reason behind invariant #2, not a style
+  preference.
+- **It names *why* the outbox isn't a workaround.** The journal
+  Remembers the publish *intent* atomically with the events; the
+  relay Moves it. Neither tries to do both jobs — which is why the
+  durability argument in [`docs/fault-tolerance.md`](fault-tolerance.md)
+  actually closes.
+
+The talk's separate warning — *OO-in-the-large* (stateful services
+sending RPCs to known recipients reproduce OO's pathologies at network
+scale) — is the guardrail for any future brick extraction: a brick
+becoming its own service must stay a Transform-with-ports, not a
+stateful actor sending messages to a named consumer.
+
 ---
 
 # Part 2 — The pure core
